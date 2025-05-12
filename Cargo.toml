@@ -17,7 +17,7 @@ include = [
 ]
 keywords = ["windowing"]
 license.workspace = true
-name = "winit"
+name = "winit_craft"
 readme = "README.md"
 repository.workspace = true
 rust-version.workspace = true
