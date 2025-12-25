@@ -21,21 +21,24 @@
 //! - `scancode`, available on Windows, macOS, Wayland and X11.
 //! - `startup_notify`, available on Wayland and X11.
 
-#[cfg(android_platform)]
+#[cfg(feature = "agnostic")]
+pub use winit_agnostic as platform;
+#[cfg(all(not(feature = "agnostic"), android_platform))]
 pub use winit_android as android;
-#[cfg(macos_platform)]
+#[cfg(all(not(feature = "agnostic"), macos_platform))]
 pub use winit_appkit as macos;
-#[cfg(orbital_platform)]
+#[cfg(all(not(feature = "agnostic"), orbital_platform))]
 pub use winit_orbital as orbital;
-#[cfg(ios_platform)]
+#[cfg(all(not(feature = "agnostic"), ios_platform))]
 pub use winit_uikit as ios;
-#[cfg(wayland_platform)]
+#[cfg(all(not(feature = "agnostic"), wayland_platform))]
 pub use winit_wayland as wayland;
-#[cfg(web_platform)]
+#[cfg(all(not(feature = "agnostic"), web_platform))]
 pub use winit_web as web;
-#[cfg(windows_platform)]
+#[cfg(all(not(feature = "agnostic"), windows_platform))]
 pub use winit_win32 as windows;
 #[cfg(x11_platform)]
+#[cfg(all(not(feature = "agnostic"), x11_platform))]
 pub use winit_x11 as x11;
 
 #[cfg(any(windows_platform, macos_platform, x11_platform, wayland_platform, docsrs))]

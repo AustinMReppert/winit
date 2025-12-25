@@ -1,16 +1,18 @@
-#[cfg(android_platform)]
+#[cfg(feature = "agnostic")]
+pub use winit_agnostic as platform;
+#[cfg(all(not(feature = "agnostic"), android_platform))]
 pub(crate) use winit_android as platform;
-#[cfg(macos_platform)]
+#[cfg(all(not(feature = "agnostic"), macos_platform))]
 pub(crate) use winit_appkit as platform;
-#[cfg(any(x11_platform, wayland_platform))]
+#[cfg(all(not(feature = "agnostic"), wayland_platform))]
 mod linux;
-#[cfg(orbital_platform)]
+#[cfg(all(not(feature = "agnostic"), orbital_platform))]
 pub(crate) use winit_orbital as platform;
-#[cfg(ios_platform)]
+#[cfg(all(not(feature = "agnostic"), ios_platform))]
 pub(crate) use winit_uikit as platform;
-#[cfg(web_platform)]
+#[cfg(all(not(feature = "agnostic"), web_platform))]
 pub(crate) use winit_web as platform;
-#[cfg(windows_platform)]
+#[cfg(all(not(feature = "agnostic"), windows_platform))]
 pub(crate) use winit_win32 as platform;
 
 #[cfg(any(x11_platform, wayland_platform))]

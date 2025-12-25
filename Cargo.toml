@@ -15,6 +15,7 @@ version = "0.31.0-beta.2"
 # `winit` has no version here to allow using it in dev deps for docs.
 winit = { path = "winit" }
 winit-android = { version = "=0.31.0-beta.2", path = "winit-android" }
+winit-agnostic = { version = "=0.31.0-beta.2", path = "winit-agnostic" }
 winit-appkit = { version = "=0.31.0-beta.2", path = "winit-appkit" }
 winit-common = { version = "=0.31.0-beta.2", path = "winit-common" }
 winit-core = { version = "=0.31.0-beta.2", path = "winit-core" }

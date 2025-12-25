@@ -465,13 +465,11 @@ impl winit_web::EventLoopExtWeb for EventLoop {
 impl winit_win32::EventLoopBuilderExtWindows for EventLoopBuilder {
     #[inline]
     fn with_any_thread(&mut self, any_thread: bool) -> &mut Self {
-        self.platform_specific.any_thread = any_thread;
         self
     }
 
     #[inline]
     fn with_dpi_aware(&mut self, dpi_aware: bool) -> &mut Self {
-        self.platform_specific.dpi_aware = dpi_aware;
         self
     }
 
@@ -480,7 +478,6 @@ impl winit_win32::EventLoopBuilderExtWindows for EventLoopBuilder {
     where
         F: FnMut(*const core::ffi::c_void) -> bool + 'static,
     {
-        self.platform_specific.msg_hook = Some(Box::new(callback));
         self
     }
 }

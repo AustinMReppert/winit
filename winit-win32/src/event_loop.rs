@@ -337,50 +337,6 @@ impl EventLoop {
 
     /// Dispatch all queued messages via `PeekMessageW`
     fn dispatch_peeked_messages(&mut self) {
-        // We generally want to continue dispatching all pending messages
-        // but we also allow dispatching to be interrupted as a means to
-        // ensure the `pump_events` won't indefinitely block an external
-        // event loop if there are too many pending events. This interrupt
-        // flag will be set after dispatching `RedrawRequested` events.
-        self.runner.interrupt_msg_dispatch.set(false);
-
-        // # Safety
-        // The Windows API has no documented requirement for bitwise
-        // initializing a `MSG` struct (it can be uninitialized memory for the C
-        // API) and there's no API to construct or initialize a `MSG`. This
-        // is the simplest way avoid uninitialized memory in Rust
-        let mut msg: MSG = unsafe { mem::zeroed() };
-
-        loop {
-            unsafe {
-                if PeekMessageW(&mut msg, ptr::null_mut(), 0, 0, PM_REMOVE) == false.into() {
-                    break;
-                }
-
-                let handled = if let Some(callback) = self.msg_hook.as_deref_mut() {
-                    callback(&mut msg as *mut _ as *mut _)
-                } else {
-                    false
-                };
-                if !handled {
-                    TranslateMessage(&msg);
-                    DispatchMessageW(&msg);
-                }
-            }
-
-            if let Err(payload) = self.runner.take_panic_error() {
-                self.runner.reset_runner();
-                panic::resume_unwind(payload);
-            }
-
-            if let Some(_code) = self.runner.exit_code() {
-                break;
-            }
-
-            if self.runner.interrupt_msg_dispatch.get() {
-                break;
-            }
-        }
     }
 
     fn exit_code(&self) -> Option<i32> {
