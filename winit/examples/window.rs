@@ -1,13 +1,20 @@
 //! Simple winit window example.
 
 use std::error::Error;
-
+use std::thread;
+use std::time::Duration;
 use winit::application::ApplicationHandler;
 use winit::event::WindowEvent;
+use winit::event_loop::EventLoopBuilder;
 use winit::event_loop::{ActiveEventLoop, EventLoop};
 #[cfg(web_platform)]
 use winit::platform::web::WindowAttributesWeb;
 use winit::window::{Window, WindowAttributes, WindowId};
+use winit_agnostic::{Event, EventLoopBuilderExtAgonstic, WindowAttributesAgnostic};
+use winit_core::event_loop::ControlFlow;
+use winit_core::window::Theme;
+use winit_win32::EventLoopBuilderExtWindows;
+//use winit_agnostic::WindowAttributesAgnostic;
 
 #[path = "util/fill.rs"]
 mod fill;
@@ -26,6 +33,9 @@ impl ApplicationHandler for App {
         #[cfg(web_platform)]
         let window_attributes = WindowAttributes::default()
             .with_platform_attributes(Box::new(WindowAttributesWeb::default().with_append(true)));
+        #[cfg(feature = "agnostic")]
+        let window_attributes = WindowAttributes::default()
+            .with_platform_attributes(Box::new(WindowAttributesAgnostic::new()));
         self.window = match event_loop.create_window(window_attributes) {
             Ok(window) => Some(window),
             Err(err) => {
@@ -34,6 +44,10 @@ impl ApplicationHandler for App {
                 return;
             },
         }
+    }
+
+    fn about_to_wait(&mut self, event_loop: &dyn ActiveEventLoop) {
+        event_loop.set_control_flow(ControlFlow::Poll);
     }
 
     fn window_event(&mut self, event_loop: &dyn ActiveEventLoop, _: WindowId, event: WindowEvent) {
@@ -74,8 +88,22 @@ fn main() -> Result<(), Box<dyn Error>> {
     console_error_panic_hook::set_once();
 
     tracing::init();
+    // ::<winit::event::WindowEvent>
+    let (sender, receiver) = std::sync::mpsc::channel::<winit::platform::platform::Event>();
 
-    let event_loop = EventLoop::new()?;
+    //#[cfg(feature = "agnostic")]
+    use winit::platform::platform::WindowAttributesAgnostic;
+    let event_loop = EventLoopBuilder::default().with_receiver(receiver).build().unwrap();
+
+    std::thread::spawn(move || {
+        loop {
+            sender.send(Event::Window {
+                window_id: WindowId::from_raw(1),
+                event: WindowEvent::ThemeChanged(Theme::Dark),
+            }).expect("TODO: panic message");
+            thread::sleep(Duration::from_secs(10));
+        }
+    });
 
     // For alternative loop run options see `pump_events` and `run_on_demand` examples.
     event_loop.run_app(App::default())?;

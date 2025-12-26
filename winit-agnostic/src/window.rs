@@ -8,8 +8,9 @@ use winit_core::cursor::Cursor;
 use winit_core::error::RequestError;
 use winit_core::icon::Icon;
 use winit_core::monitor::{Fullscreen, MonitorHandle};
-use winit_core::window::{CursorGrabMode, ImeCapabilities, ImeRequest, ImeRequestError, ResizeDirection, Theme, UserAttentionType, Window as RootWindow, WindowButtons, WindowId, WindowLevel};
-use crate::window_id;
+use winit_core::window::{CursorGrabMode, ImeCapabilities, ImeRequest, ImeRequestError, ResizeDirection, Theme, UserAttentionType, Window as RootWindow, WindowAttributes, WindowButtons, WindowId, WindowLevel};
+use crate::{window_id, WindowAttributesAgnostic};
+use crate::event_loop::{self, ActiveEventLoop};
 
 pub(crate) struct Window(Arc<Mutex<WindowState>>);
 
@@ -44,10 +45,20 @@ struct WindowState {
 }
 
 impl Window {
-    pub(crate) fn new() -> Self{
-        Self {
+    pub(crate) fn new(
+        event_loop: &ActiveEventLoop,
+        w_attr: WindowAttributes,
+    ) -> Result<Window, RequestError> {
+        let mut w_attr = w_attr;
+        let win_attributes = w_attr
+            .platform
+            .take()
+            .and_then(|attrs| attrs.cast::<WindowAttributesAgnostic>().ok())
+            .unwrap_or_default();
+
+        Ok(Self {
             0: Arc::new(Mutex::new(WindowState::new()))
-        }
+        })
     }
 }
 
@@ -172,7 +183,7 @@ impl RootWindow for Window {
     }
 
     fn enabled_buttons(&self) -> WindowButtons {
-        todo!()
+        self.0.lock().unwrap().enabled_buttons
     }
 
     fn set_minimized(&self, minimized: bool) {

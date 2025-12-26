@@ -356,6 +356,14 @@ impl winit_core::event_loop::run_on_demand::EventLoopExtRunOnDemand for EventLoo
     }
 }
 
+#[cfg(feature = "agnostic")]
+impl winit_agnostic::EventLoopBuilderExtAgonstic for EventLoopBuilder {
+    fn with_receiver(&mut self, receiver: std::sync::mpsc::Receiver<platform_impl::Event>) -> &mut Self {
+        self.platform_specific.events = Some(receiver);
+        self
+    }
+}
+
 #[cfg(any(web_platform, docsrs))]
 impl winit_core::event_loop::register::EventLoopExtRegister for EventLoop {
     fn register_app<A: ApplicationHandler + 'static>(self, app: A) {
