@@ -1,5 +1,7 @@
-use std::cell::Cell;
-use std::{fmt, mem};
+use std::cell::{Cell, RefCell};
+use std::{fmt, mem, panic};
+use std::any::Any;
+use std::collections::VecDeque;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -11,9 +13,10 @@ use winit_core::window::WindowId;
 
 use winit_core::event::{DeviceEvent, DeviceId, StartCause, SurfaceSizeWriter, WindowEvent};
 use winit_core::event_loop::ActiveEventLoop as RootActiveEventLoop;
+use crate::event_loop::ActiveEventLoop;
 
 type EventHandler = Cell<Option<&'static mut (dyn ApplicationHandler + 'static)>>;
-
+pub type PanicError = Box<dyn Any + Send + 'static>;
 
 pub(crate) struct EventLoopRunner {
     runner_state: Cell<RunnerState>,
@@ -22,6 +25,13 @@ pub(crate) struct EventLoopRunner {
     event_handler: Arc<EventHandler>,
     events: Option<std::sync::mpsc::Receiver<Event>>,
     last_events_cleared: Cell<Instant>,
+    event_buffer: RefCell<VecDeque<Event>>,
+    panic_error: Cell<Option<PanicError>>,
+
+    // Setting this will ensure pump_events will return to the external
+    // loop asap. E.g. set after each RedrawRequested to ensure pump_events
+    // can't stall an external loop beyond a frame
+    pub(super) interrupt_msg_dispatch: Cell<bool>,
 }
 
 pub enum Event {
@@ -57,6 +67,9 @@ impl EventLoopRunner {
             event_handler: Arc::new(Cell::new(None)),
             events,
             last_events_cleared: Cell::new(Instant::now()),
+            event_buffer: RefCell::new(VecDeque::new()),
+            panic_error: Cell::new(None),
+            interrupt_msg_dispatch: Cell::new(false),
         }
     }
 
@@ -87,7 +100,28 @@ impl EventLoopRunner {
         self.move_state_to(RunnerState::HandlingMainEvents);
     }
 
-    pub(crate) fn send_event(self: &Rc<Self>, event: Event) {
+    pub(crate) fn send_event(self: &Arc<Self>, event: Event) {
+        if let Event::Window { event: WindowEvent::RedrawRequested, .. } = event {
+            self.call_event_handler(|app, event_loop| event.dispatch_event(app, event_loop));
+            // As a rule, to ensure that `pump_events` can't block an external event loop
+            // for too long, we always guarantee that `pump_events` will return control to
+            // the external loop asap after a `RedrawRequested` event is dispatched.
+            self.interrupt_msg_dispatch.set(true);
+        } else if self.should_buffer() {
+            // If the runner is already borrowed, we're in the middle of an event loop invocation.
+            // Add the event to a buffer to be processed later.
+            self.event_buffer.borrow_mut().push_back(event.buffer_scale_factor())
+        } else {
+            self.call_event_handler(|app, event_loop| event.dispatch_event(app, event_loop));
+            self.dispatch_buffered_events();
+        }
+    }
+
+    pub fn should_buffer(&self) -> bool {
+        let handler = self.event_handler.take();
+        let should_buffer = handler.is_none();
+        self.event_handler.set(handler);
+        should_buffer
     }
 
     pub(crate) fn loop_destroyed(self: &Arc<Self>) {
@@ -98,7 +132,43 @@ impl EventLoopRunner {
         self: &Arc<Self>,
         closure: impl FnOnce(&mut dyn ApplicationHandler, &dyn RootActiveEventLoop),
     ) {
+        self.catch_unwind(|| {
+            let event_handler = self.event_handler.take().expect(
+                "either event handler is re-entrant (likely), or no event handler is registered \
+                 (very unlikely)",
+            );
 
+            closure(event_handler, ActiveEventLoop::from_ref(self));
+
+            assert!(self.event_handler.replace(Some(event_handler)).is_none());
+        });
+    }
+
+    pub fn catch_unwind<R>(&self, f: impl FnOnce() -> R) -> Option<R> {
+        let panic_error = self.panic_error.take();
+        if panic_error.is_none() {
+            let result = panic::catch_unwind(panic::AssertUnwindSafe(f));
+
+            // Check to see if the panic error was set in a re-entrant call to catch_unwind inside
+            // of `f`. If it was, that error takes priority. If it wasn't, check if our call to
+            // catch_unwind caught any panics and set panic_error appropriately.
+            match self.panic_error.take() {
+                None => match result {
+                    Ok(r) => Some(r),
+                    Err(e) => {
+                        self.panic_error.set(Some(e));
+                        None
+                    },
+                },
+                Some(e) => {
+                    self.panic_error.set(Some(e));
+                    None
+                },
+            }
+        } else {
+            self.panic_error.set(panic_error);
+            None
+        }
     }
 
     pub fn clear_exit(&self) {
@@ -106,10 +176,38 @@ impl EventLoopRunner {
     }
 
     pub(crate) fn reset_runner(&self) {
-        self.exit.set(None);
+        let Self {
+            interrupt_msg_dispatch,
+            runner_state,
+            panic_error,
+            control_flow: _,
+            exit,
+            last_events_cleared: _,
+            event_handler,
+            event_buffer: _,
+            events: _,
+        } = self;
+        interrupt_msg_dispatch.set(false);
+        runner_state.set(RunnerState::Uninitialized);
+        panic_error.set(None);
+        exit.set(None);
+        event_handler.set(None);
     }
 
-    fn dispatch_buffered_events(self: &Rc<Self>) {
+    fn dispatch_buffered_events(self: &Arc<Self>) {
+        loop {
+            // We do this instead of using a `while let` loop because if we use a `while let`
+            // loop the reference returned `borrow_mut()` doesn't get dropped until the end
+            // of the loop's body and attempts to add events to the event buffer while in
+            // `process_event` will fail.
+            let buffered_event_opt = self.event_buffer.borrow_mut().pop_front();
+            match buffered_event_opt {
+                Some(e) => {
+                    self.call_event_handler(|app, event_loop| e.dispatch_event(app, event_loop))
+                },
+                None => break,
+            }
+        }
     }
 
     pub fn events(&self) -> Option<&std::sync::mpsc::Receiver<Event>> {
@@ -222,6 +320,34 @@ impl EventLoopRunner {
     }
 
     fn call_new_events(self: &Arc<Self>, init: bool) {
+        let start_cause = match (init, self.control_flow(), self.exit.get()) {
+            (true, ..) => StartCause::Init,
+            (false, ControlFlow::Poll, None) => StartCause::Poll,
+            (false, _, Some(_)) | (false, ControlFlow::Wait, None) => StartCause::WaitCancelled {
+                requested_resume: None,
+                start: self.last_events_cleared.get(),
+            },
+            (false, ControlFlow::WaitUntil(requested_resume), None) => {
+                if Instant::now() < requested_resume {
+                    StartCause::WaitCancelled {
+                        requested_resume: Some(requested_resume),
+                        start: self.last_events_cleared.get(),
+                    }
+                } else {
+                    StartCause::ResumeTimeReached {
+                        requested_resume,
+                        start: self.last_events_cleared.get(),
+                    }
+                }
+            },
+        };
+        self.call_event_handler(|app, event_loop| app.new_events(event_loop, start_cause));
+        // NB: For consistency all platforms must call `can_create_surfaces` even though Windows
+        // applications don't themselves have a formal surface destroy/create lifecycle.
+        if init {
+            self.call_event_handler(|app, event_loop| app.can_create_surfaces(event_loop));
+        }
+        self.dispatch_buffered_events();
     }
 
     pub fn control_flow(&self) -> ControlFlow {
@@ -245,8 +371,37 @@ impl Event {
         app: &mut dyn ApplicationHandler,
         event_loop: &dyn RootActiveEventLoop,
     ) {
-    }
+        match self {
+            Self::Window { window_id, event } => app.window_event(event_loop, window_id, event),
+            Self::Device { device_id, event } => {
+                app.device_event(event_loop, Some(device_id), event)
+            },
+            /*Self::BufferedScaleFactorChanged(window, scale_factor, new_surface_size) => {
+                let user_new_surface_size = Arc::new(Mutex::new(new_surface_size));
+                app.window_event(
+                    event_loop,
+                    WindowId::from_raw(window as usize),
+                    WindowEvent::ScaleFactorChanged {
+                        scale_factor,
+                        surface_size_writer: SurfaceSizeWriter::new(Arc::downgrade(
+                            &user_new_surface_size,
+                        )),
+                    },
+                );
+                let surface_size = *user_new_surface_size.lock().unwrap();
 
-    pub(crate) fn reset_runner(&self) {
+                drop(user_new_surface_size);
+
+                if surface_size != new_surface_size {
+                    let window_flags = unsafe {
+                        let userdata = get_window_long(window, GWL_USERDATA) as *mut WindowData;
+                        (*userdata).window_state_lock().window_flags
+                    };
+
+                    window_flags.set_size(window, surface_size);
+                }
+            },*/
+            Self::WakeUp => app.proxy_wake_up(event_loop),
+        }
     }
 }

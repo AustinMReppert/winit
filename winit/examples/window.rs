@@ -13,8 +13,6 @@ use winit::window::{Window, WindowAttributes, WindowId};
 use winit_agnostic::{Event, EventLoopBuilderExtAgonstic, WindowAttributesAgnostic};
 use winit_core::event_loop::ControlFlow;
 use winit_core::window::Theme;
-use winit_win32::EventLoopBuilderExtWindows;
-//use winit_agnostic::WindowAttributesAgnostic;
 
 #[path = "util/fill.rs"]
 mod fill;
@@ -46,10 +44,6 @@ impl ApplicationHandler for App {
         }
     }
 
-    fn about_to_wait(&mut self, event_loop: &dyn ActiveEventLoop) {
-        event_loop.set_control_flow(ControlFlow::Poll);
-    }
-
     fn window_event(&mut self, event_loop: &dyn ActiveEventLoop, _: WindowId, event: WindowEvent) {
         println!("{event:?}");
         match event {
@@ -78,8 +72,15 @@ impl ApplicationHandler for App {
                 // For contiguous redraw loop you can request a redraw from here.
                 // window.request_redraw();
             },
+            WindowEvent::ThemeChanged(_) => {
+                println!("artificial event dispatched");
+            }
             _ => (),
         }
+    }
+
+    fn about_to_wait(&mut self, event_loop: &dyn ActiveEventLoop) {
+        event_loop.set_control_flow(ControlFlow::Poll);
     }
 }
 

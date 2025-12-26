@@ -176,12 +176,12 @@ impl EventLoop {
             if let Some(timeout) = timeout {
                 println!("Waiting with timeout");
                 if let Ok(event) = events.recv_timeout(timeout) {
-                    println!("event");
+                    self.runner.send_event(event);
                 }
             } else {
                 println!("Waiting");
                 if let Ok(event) = events.recv() {
-                    println!("event");
+                    self.runner.send_event(event);
                 }
             }
         }
@@ -203,7 +203,7 @@ impl EventLoop {
 pub(crate) struct ActiveEventLoop(pub Arc<EventLoopRunner>);
 
 impl ActiveEventLoop {
-    fn from_ref(shared_runner: &Arc<EventLoopRunner>) -> &Self {
+    pub(crate) fn from_ref(shared_runner: &Arc<EventLoopRunner>) -> &Self {
         // SAFETY: `ActiveEventLoop` is `#[repr(transparent)]` over `Rc<EventLoopRunner>`.
         // FIXME(madsmtm): Implement `ActiveEventLoop` for `Rc<EventLoopRunner>` directly.
         unsafe { mem::transmute::<&Arc<EventLoopRunner>, &Self>(shared_runner) }
